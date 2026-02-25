@@ -14,6 +14,7 @@ def main(
     zoom: float = 2.0,
     out_size: tuple = (1654, 2339),
     margin_px: int | None = None,
+    debug_dir: str | None = "debug",
 ) -> None:
     # 1) Загрузка PDF → бинаризация → выравнивание → сохранение
     align_pdf_form(
@@ -23,6 +24,7 @@ def main(
         zoom=zoom,
         out_size=out_size,
         margin_px=margin_px,
+        debug_dir=debug_dir,
     )
 
     # 2) Вырезка ячеек из выравненного (уже бинаризованного) изображения
@@ -38,4 +40,5 @@ if __name__ == "__main__":
         zoom=2.0,
         out_size=(1654, 2339),
         margin_px=None,
+        debug_dir="debug",
     )

@@ -1,5 +1,7 @@
 """Выравнивание бланка по чёрным маркерам."""
 
+from pathlib import Path
+
 import cv2
 import numpy as np
 
@@ -78,7 +80,9 @@ def _find_marker_in_roi(
 
 
 def detect_black_square_markers(
-    img_bgr: np.ndarray, roi_frac: float = 0.28, debug: bool = True
+    img_bgr: np.ndarray,
+    roi_frac: float = 0.28,
+    debug_dir: str | Path | None = None,
 ):
     """
     Ищем маркеры в 4 угловых ROI (тёмный порог + размер + близость к углу).
@@ -97,15 +101,16 @@ def detect_black_square_markers(
         "bl": (0, H - rh, rw, H, (0, rh - 1)),
     }
 
-    found = {}
-    sides = {}
+    found: dict[str, np.ndarray] = {}
+    sides: dict[str, float] = {}
 
     for key, (x0, y0, x1, y1, corner_xy) in rois.items():
         roi = gray_full[y0:y1, x0:x1]
         best, bw = _find_marker_in_roi(roi, corner_xy=corner_xy)
 
-        # if debug:
-        #     cv2.imwrite(f"debug_bw_{key}.png", bw)
+        if debug_dir is not None:
+            Path(debug_dir).mkdir(parents=True, exist_ok=True)
+            cv2.imwrite(str(Path(debug_dir) / f"debug_bw_{key}.png"), bw)
 
         if best is None:
             continue
@@ -132,6 +137,7 @@ def detect_black_square_markers(
             found["br"] = found["tr"] + found["bl"] - found["tl"]
         elif m == "bl":
             found["bl"] = found["tl"] + found["br"] - found["tr"]
+
         mean_side = float(np.mean(list(sides.values())))
         sides[m] = mean_side
 
@@ -181,14 +187,29 @@ def align_pdf_form(
     zoom: float = 2.0,
     out_size=(1654, 2339),
     margin_px: int | None = None,
+    debug_dir: str | Path | None = None,
 ) -> None:
-    """Загружает страницу PDF, выравнивает по маркерам, сохраняет."""
+    """
+    Загружает страницу PDF, выравнивает по маркерам, сохраняет.
+
+    ВАЖНО: здесь НЕ делаем preprocess_for_blocks(), потому что он убивает линии сетки.
+    Предобработку (бинаризацию/линии) делаем локально в rows.py.
+    """
     img = pdf_page_to_bgr(pdf_path, page_index=page_index, zoom=zoom)
-    centers4, avg_side = detect_black_square_markers(img, roi_frac=0.28)
+    centers4, avg_side = detect_black_square_markers(
+        img, roi_frac=0.28, debug_dir=debug_dir
+    )
 
     if margin_px is None:
         margin_px = max(40, int(avg_side * 2.0))
 
     aligned = warp_keep_full_page(img, centers4, out_size=out_size, margin_px=margin_px)
+
+    if debug_dir is not None:
+        Path(debug_dir).mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(Path(debug_dir) / "aligned_raw.png"), aligned)
+
     cv2.imwrite(out_path, aligned)
     print(f"OK: {out_path} (margin_px={margin_px})")
+    if debug_dir is not None:
+        print(f"Debug: {Path(debug_dir).resolve()}")
