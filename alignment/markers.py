@@ -1,11 +1,9 @@
-"""Выравнивание бланка по чёрным маркерам."""
+"""Поиск чёрных маркеров в углах изображения."""
 
 from pathlib import Path
 
 import cv2
 import numpy as np
-
-from pdf_loader import pdf_page_to_bgr
 
 
 def order_points(pts: np.ndarray) -> np.ndarray:
@@ -151,65 +149,3 @@ def detect_black_square_markers(
     )
     avg_side = float(np.mean([sides[k] for k in corners]))
     return centers4, avg_side
-
-
-def warp_keep_full_page(
-    img_bgr: np.ndarray,
-    marker_centers4: np.ndarray,
-    out_size=(1654, 2339),
-    margin_px: int = 90,
-) -> np.ndarray:
-    """
-    SRC: центры маркеров на изображении.
-    DST: центры маркеров в шаблоне с отступом margin_px от края.
-    """
-    w, h = out_size
-    src = order_points(marker_centers4)
-
-    dst = np.array(
-        [
-            [margin_px, margin_px],
-            [w - 1 - margin_px, margin_px],
-            [w - 1 - margin_px, h - 1 - margin_px],
-            [margin_px, h - 1 - margin_px],
-        ],
-        dtype=np.float32,
-    )
-
-    M = cv2.getPerspectiveTransform(src, dst)
-    return cv2.warpPerspective(img_bgr, M, (w, h), flags=cv2.INTER_CUBIC)
-
-
-def align_pdf_form(
-    pdf_path: str,
-    out_path: str = "aligned.png",
-    page_index: int = 0,
-    zoom: float = 2.0,
-    out_size=(1654, 2339),
-    margin_px: int | None = None,
-    debug_dir: str | Path | None = None,
-) -> None:
-    """
-    Загружает страницу PDF, выравнивает по маркерам, сохраняет.
-
-    ВАЖНО: здесь НЕ делаем preprocess_for_blocks(), потому что он убивает линии сетки.
-    Предобработку (бинаризацию/линии) делаем локально в rows.py.
-    """
-    img = pdf_page_to_bgr(pdf_path, page_index=page_index, zoom=zoom)
-    centers4, avg_side = detect_black_square_markers(
-        img, roi_frac=0.28, debug_dir=debug_dir
-    )
-
-    if margin_px is None:
-        margin_px = max(40, int(avg_side * 2.0))
-
-    aligned = warp_keep_full_page(img, centers4, out_size=out_size, margin_px=margin_px)
-
-    if debug_dir is not None:
-        Path(debug_dir).mkdir(parents=True, exist_ok=True)
-        cv2.imwrite(str(Path(debug_dir) / "aligned_raw.png"), aligned)
-
-    cv2.imwrite(out_path, aligned)
-    print(f"OK: {out_path} (margin_px={margin_px})")
-    if debug_dir is not None:
-        print(f"Debug: {Path(debug_dir).resolve()}")
