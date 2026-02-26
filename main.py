@@ -34,12 +34,12 @@ def main(
 
 if __name__ == "__main__":
     main(
-        pdf_path=r"examples/3993.pdf",
-        aligned_path=None,  # None = не сохранять aligned; укажи путь для сохранения выравненного листа
+        pdf_path=r"examples/397.pdf",
+        aligned_path="aligned.png",  # None = не сохранять aligned; укажи путь для сохранения выравненного листа
         rows_out_dir="rows_out",
         page_index=0,
         zoom=2.0,
         out_size=(1654, 2339),
         margin_px=None,
-        debug=False,
+        debug=True,
     )

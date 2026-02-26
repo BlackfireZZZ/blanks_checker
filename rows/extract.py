@@ -1,5 +1,6 @@
 """Оркестрация: вырезка заголовков, строк и клеток с выравненного бланка."""
 
+import json
 from pathlib import Path
 
 import cv2
@@ -45,6 +46,26 @@ def extract_cells(
     debug_base = (out_dir_p / "_debug_grid") if debug else None
     header_debug_base = (out_dir_p / "_debug_header") if debug else None
 
+    H, W = img.shape[:2]
+
+    # --- Debug: сохраняем ROI и координаты для отладки нарезки строк ---
+    if debug_base is not None:
+        debug_base.mkdir(parents=True, exist_ok=True)
+        vis = img.copy()
+        # Рисуем HEADER_ROIS (зелёный) и TABLE_ROIS (синий / малиновый)
+        for name, (x1, y1, x2, y2) in HEADER_ROIS.items():
+            X1, Y1 = int(x1 * W), int(y1 * H)
+            X2, Y2 = int(x2 * W), int(y2 * H)
+            cv2.rectangle(vis, (X1, Y1), (X2, Y2), (0, 255, 0), 2)
+            cv2.putText(vis, name, (X1, Y1 - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+        for name, (x1, y1, x2, y2) in TABLE_ROIS.items():
+            color = (255, 0, 0) if name == "answers" else (255, 0, 255)
+            X1, Y1 = int(x1 * W), int(y1 * H)
+            X2, Y2 = int(x2 * W), int(y2 * H)
+            cv2.rectangle(vis, (X1, Y1), (X2, Y2), color, 2)
+            cv2.putText(vis, name, (X1, Y1 - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+        _save_debug_img(debug_base, "aligned_with_rois.png", vis)
+
     # --- Заголовки: вариант/дата/рег.номер -> только клетки + нарезка ---
     header_imgs: dict[str, np.ndarray] = {}
 
@@ -66,6 +87,27 @@ def extract_cells(
     # --- Строки ответов/замен: bbox -> crop -> нарезка 9 клеток ---
     left_rows = detect_rows_by_grid(img, TABLE_ROIS["answers"], debug_dir=debug_base / "left" if debug_base else None)
     right_rows = detect_rows_by_grid(img, TABLE_ROIS["repl"], debug_dir=debug_base / "right" if debug_base else None)
+
+    if debug_base is not None:
+        roi_debug = {
+            "image_shape": {"H": H, "W": W},
+            "HEADER_ROIS": {k: list(v) for k, v in HEADER_ROIS.items()},
+            "TABLE_ROIS": {k: list(v) for k, v in TABLE_ROIS.items()},
+            "TABLE_ROIS_px": {
+                name: [int(t[0] * W), int(t[1] * H), int(t[2] * W), int(t[3] * H)]
+                for name, t in TABLE_ROIS.items()
+            },
+            "left_row_bboxes": [{"x": x, "y": y, "w": w, "h": h} for (x, y, w, h) in left_rows],
+            "right_row_bboxes": [{"x": x, "y": y, "w": w, "h": h} for (x, y, w, h) in right_rows],
+        }
+        (debug_base / "roi_and_rows.json").write_text(json.dumps(roi_debug, indent=2), encoding="utf-8")
+        # Полная картинка с bbox всех строк (синий — ответы, малиновый — замена)
+        vis_rows = img.copy()
+        for (x, y, w, h) in left_rows:
+            cv2.rectangle(vis_rows, (x, y), (x + w, y + h), (255, 0, 0), 1)
+        for (x, y, w, h) in right_rows:
+            cv2.rectangle(vis_rows, (x, y), (x + w, y + h), (255, 0, 255), 1)
+        _save_debug_img(debug_base, "aligned_with_row_bboxes.png", vis_rows)
 
     n_row_cells = FIELD_NCELLS["answers"]
 
