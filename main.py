@@ -34,7 +34,7 @@ def main(
 
 if __name__ == "__main__":
     main(
-        pdf_path=r"examples/397.pdf",
+        pdf_path=r"examples/3993.pdf",
         aligned_path="aligned.png",  # None = не сохранять aligned; укажи путь для сохранения выравненного листа
         rows_out_dir="rows_out",
         page_index=0,

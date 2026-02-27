@@ -12,7 +12,7 @@ from pathlib import Path
 
 import cv2
 
-from cell_ocr import CellRecognizer, MnistDigitClassifier
+from cell_ocr import recognize_cell
 
 
 def _norm_pred(pred: str | None) -> str:
@@ -123,8 +123,9 @@ def run_evaluation(
         return {"error": "cells_dir not found", "acc_no_empty": 0.0, "acc_all": 0.0}
 
     gt = ground_truth if ground_truth is not None else build_ground_truth()
-    clf = MnistDigitClassifier(weights_path=str(weights_path), device="cpu")
-    rec = CellRecognizer(clf, debug_mnist_dir=debug_mnist_dir)
+    debug_dir = Path(debug_mnist_dir) if debug_mnist_dir is not None else None
+    if debug_dir is not None:
+        debug_dir.mkdir(parents=True, exist_ok=True)
 
     results: list[tuple[str, str, str, bool]] = []  # path, expected, pred, correct
     missing: list[str] = []
@@ -140,8 +141,12 @@ def run_evaluation(
         if img is None:
             missing.append(rel_path)
             continue
-        pred = rec.recognize_bgr(img, debug_source_name=rel_path)
-        pred_norm = _norm_pred(pred)
+        # recognize_cell returns "E" | "-" | "0".."9"
+        out_dir = None
+        if debug_dir is not None:
+            safe_name = rel_path.replace("\\", "__").replace("/", "__")
+            out_dir = debug_dir / safe_name
+        pred_norm = recognize_cell(img, weights_path=str(weights_path), debug=out_dir is not None, debug_out_dir=out_dir)
         correct = pred_norm == expected
         results.append((rel_path, expected, pred_norm, correct))
 

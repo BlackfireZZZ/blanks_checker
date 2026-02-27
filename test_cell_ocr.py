@@ -9,7 +9,7 @@ from pathlib import Path
 
 import cv2
 
-from cell_ocr import CellRecognizer, MnistDigitClassifier
+from cell_ocr import recognize_cell
 
 
 def find_all_cells(cells_dir: Path) -> list[Path]:
@@ -37,9 +37,7 @@ def main(
         print(f"Не удалось загрузить изображение: {cell_path}")
         sys.exit(1)
 
-    clf = MnistDigitClassifier(weights_path=weights_path, device="cpu")
-    rec = CellRecognizer(clf)
-    pred = rec.recognize_bgr(img)
+    pred = recognize_cell(img, weights_path=weights_path)
 
     try:
         rel = cell_path.relative_to(base)
@@ -47,7 +45,7 @@ def main(
         rel = cell_path
     print(f"Клетка: {rel}")
     print(f"Предсказание: {repr(pred)}")
-    if pred is None:
+    if pred == "E":
         print("(пустая клетка)")
 
     if show_image:
