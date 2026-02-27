@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -10,13 +11,19 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert } from "@/components/ui/alert";
+import { AppNav } from "@/components/AppNav";
 import {
   uploadPdfAndPredict,
+  downloadBlanksTable,
   type BlankCheckResult,
+  type CorrectionPayload,
   ApiError,
   NetworkError,
+  isCorrectionPayload,
 } from "@/api/blankCheck";
-import { FileUp, Loader2 } from "lucide-react";
+import { CorrectionForm } from "@/components/CorrectionForm";
+import { formatDate } from "@/utils/format";
+import { FileUp, Loader2, Download, List } from "lucide-react";
 
 export function UploadPage() {
   const [file, setFile] = useState<File | null>(null);
@@ -25,6 +32,9 @@ export function UploadPage() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<BlankCheckResult | null>(null);
   const [lastRecordId, setLastRecordId] = useState<number | null>(null);
+  const [correction, setCorrection] = useState<CorrectionPayload | null>(null);
+  const [downloadingTable, setDownloadingTable] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,6 +44,7 @@ export function UploadPage() {
     }
     setError(null);
     setResult(null);
+    setCorrection(null);
     setLastRecordId(null);
     setLoading(true);
     try {
@@ -42,12 +53,21 @@ export function UploadPage() {
       setLastRecordId(data.record_id);
     } catch (err) {
       if (err instanceof ApiError) {
-        const base = `Ошибка (${err.code})`;
-        const detailsPage =
-          typeof err.details?.page === "number"
-            ? ` (страница ${err.details.page})`
-            : "";
-        setError(`${base}${detailsPage}: ${err.message}`);
+        if (
+          err.status === 422 &&
+          err.code === "REVIEW_REQUIRED" &&
+          isCorrectionPayload(err.details)
+        ) {
+          setCorrection(err.details);
+          setError(null);
+        } else {
+          const base = `Ошибка (${err.code})`;
+          const maybePage =
+            err.details && typeof (err.details as any).page === "number"
+              ? ` (страница ${(err.details as any).page})`
+              : "";
+          setError(`${base}${maybePage}: ${err.message}`);
+        }
       } else if (err instanceof NetworkError) {
         setError(err.message);
       } else if (err instanceof Error) {
@@ -66,16 +86,63 @@ export function UploadPage() {
     setError(null);
     setResult(null);
     setLastRecordId(null);
+    setCorrection(null);
+  };
+
+  const handleDownloadTable = async () => {
+    setDownloadError(null);
+    setDownloadingTable(true);
+    try {
+      await downloadBlanksTable();
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setDownloadError(`${err.code}: ${err.message}`);
+      } else if (err instanceof NetworkError) {
+        setDownloadError(err.message);
+      } else if (err instanceof Error) {
+        setDownloadError(err.message);
+      } else {
+        setDownloadError(String(err));
+      }
+    } finally {
+      setDownloadingTable(false);
+    }
   };
 
   return (
     <div className="min-h-screen bg-muted/30 py-8 px-4">
-      <div className="max-w-2xl mx-auto space-y-8">
-        <div className="text-center">
+      <AppNav />
+      <div className="max-w-5xl mx-auto space-y-8">
+        <div className="text-center flex flex-col items-center gap-3">
           <h1 className="text-2xl font-bold tracking-tight">Проверка бланков</h1>
           <p className="text-muted-foreground mt-1">
             Загрузите PDF-страницу бланка для распознавания
           </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={handleDownloadTable}
+            disabled={downloadingTable}
+          >
+            {downloadingTable ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Download className="h-4 w-4" />
+            )}
+            <span className="ml-2">Скачать таблицу</span>
+          </Button>
+          <Button variant="outline" size="sm" asChild>
+            <Link to="/list">
+              <List className="h-4 w-4 mr-2" />
+              К списку бланков
+            </Link>
+          </Button>
+          {downloadError && (
+            <Alert variant="destructive" className="max-w-md">
+              {downloadError}
+            </Alert>
+          )}
         </div>
 
         <Card>
@@ -132,6 +199,17 @@ export function UploadPage() {
           </Alert>
         )}
 
+        {correction && (
+          <CorrectionForm
+            payload={correction}
+            onSuccess={(data) => {
+              setResult(data);
+              setLastRecordId(data.record_id);
+              setCorrection(null);
+            }}
+          />
+        )}
+
         {result && (
           <Card>
             <CardHeader>
@@ -141,8 +219,20 @@ export function UploadPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              {result.aligned_image_url && (
+                <Alert>
+                  <a
+                    href={result.aligned_image_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline"
+                  >
+                    Скачать выровненное изображение страницы (PNG)
+                  </a>
+                </Alert>
+              )}
               <ResultBlock title="Вариант" items={[result.variant.join("")]} />
-              <ResultBlock title="Дата" items={[result.date.join("")]} />
+              <ResultBlock title="Дата" items={[formatDate(result.date)]} />
               <ResultBlock title="Рег. номер" items={[result.reg_number.join("")]} />
               <ResultBlock
                 title="Ответы"

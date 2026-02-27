@@ -17,6 +17,10 @@ services:
       DB_PASSWORD: postgres
       DB_NAME: postgres
 
+      ADMIN_LOGIN: admin
+      ADMIN_PASSWORD: changeme
+      JWT_SECRET: dev-jwt-secret-change-in-production
+
       S3_ENDPOINT_URL: http://minio:9000
       S3_PUBLIC_URL: http://localhost:9000
       S3_ACCESS_KEY_ID: minioadmin

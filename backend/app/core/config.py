@@ -29,6 +29,12 @@ class Settings(BaseSettings):
     S3_BUCKET_NAME: str = "blanks-artifacts"
     S3_USE_SSL: bool = False
 
+    ADMIN_LOGIN: str = ""
+    ADMIN_PASSWORD: str = ""
+    JWT_SECRET: str = "change-me-in-production"
+    JWT_ALGORITHM: str = "HS256"
+    JWT_EXPIRE_MINUTES: int = 60 * 24 * 7  # 1 week
+
     @property
     def DATABASE_URL(self) -> str:
         return (

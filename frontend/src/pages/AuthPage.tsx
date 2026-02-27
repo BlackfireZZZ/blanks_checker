@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Card,
   CardHeader,
@@ -9,14 +10,28 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { login, setToken } from "@/api/auth";
 
 export function AuthPage() {
-  const [email, setEmail] = useState("");
+  const [loginName, setLoginName] = useState("");
   const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const navigate = useNavigate();
 
-  const handleSubmit = (event: React.FormEvent) => {
+  const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
-    // Auth flow will be implemented later.
+    setError(null);
+    setLoading(true);
+    try {
+      const res = await login(loginName, password);
+      setToken(res.access_token);
+      navigate("/", { replace: true });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Неверный логин или пароль");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -25,19 +40,25 @@ export function AuthPage() {
         <CardHeader>
           <CardTitle>Вход</CardTitle>
           <CardDescription>
-            Введите email и пароль, чтобы войти в систему
+            Введите логин и пароль, чтобы войти в систему
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
+            {error && (
+              <p className="text-sm text-destructive" role="alert">
+                {error}
+              </p>
+            )}
             <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
+              <Label htmlFor="login">Логин</Label>
               <Input
-                id="email"
-                type="email"
-                autoComplete="email"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
+                id="login"
+                type="text"
+                autoComplete="username"
+                value={loginName}
+                onChange={(event) => setLoginName(event.target.value)}
+                disabled={loading}
               />
             </div>
             <div className="space-y-2">
@@ -48,10 +69,11 @@ export function AuthPage() {
                 autoComplete="current-password"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
+                disabled={loading}
               />
             </div>
-            <Button type="submit" className="w-full">
-              Войти
+            <Button type="submit" className="w-full" disabled={loading}>
+              {loading ? "Вход..." : "Войти"}
             </Button>
           </form>
         </CardContent>
@@ -59,4 +81,3 @@ export function AuthPage() {
     </div>
   );
 }
-

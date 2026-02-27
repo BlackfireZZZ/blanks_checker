@@ -5,6 +5,8 @@ End-to-end blanks pipeline: PDF bytes -> structured recognition result in memory
 from pathlib import Path
 from typing import Any
 
+import cv2
+
 from app.services.pdf_loader import pdf_bytes_to_bgr
 from app.alignment.align import align_form_from_image
 from app.rows.extract import extract_cells_to_result
@@ -32,6 +34,7 @@ def run_blanks_pipeline(
     margin_px: int | None = None,
     debug: bool = False,
     weights_path: str | Path | None = None,
+    return_aligned_png: bool = False,
 ) -> dict[str, Any]:
     """
     Запускает пайплайн полностью в памяти: PDF bytes -> структурированный результат.
@@ -53,6 +56,12 @@ def run_blanks_pipeline(
         margin_px=margin_px,
         debug_dir=debug_dir,
     )
+    aligned_png: bytes | None = None
+    if return_aligned_png:
+        success, buf = cv2.imencode(".png", aligned)
+        if not success:
+            raise RuntimeError("Failed to encode aligned image to PNG")
+        aligned_png = buf.tobytes()
     result_cells = extract_cells_to_result(aligned, debug=debug)
 
     def run_ocr(cells_list, debug_ocr=False):
@@ -67,10 +76,13 @@ def run_blanks_pipeline(
     answers = [run_ocr(row, debug_ocr=debug) for row in result_cells["answers"]]
     repl = [run_ocr(row, debug_ocr=debug) for row in result_cells["repl"]]
 
-    return {
+    result: dict[str, Any] = {
         "variant": variant,
         "date": date,
         "reg_number": reg_number,
         "answers": answers,
         "repl": repl,
     }
+    if return_aligned_png and aligned_png is not None:
+        result["aligned_png"] = aligned_png
+    return result
