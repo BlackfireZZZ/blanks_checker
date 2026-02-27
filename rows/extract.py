@@ -117,7 +117,13 @@ def extract_cells(
         row_debug_dir = (debug_base / "left" / f"row_{i:02d}") if debug_base else None
         _save_debug_img(row_debug_dir, "row_raw.png", row_img)
 
-        row_img = remove_grid_lines(row_img, min_len_ratio=0.75, max_thickness=3, close_gaps=1)
+        row_img = remove_grid_lines(
+            row_img,
+            mode="h",
+            min_len_ratio=0.75,
+            max_thickness=3,
+            close_gaps=0,  # important: avoid connecting digits to lines
+        )
         _save_debug_img(row_debug_dir, "row_cleaned.png", row_img)
 
         cv2.imwrite(str(out_dir_p / f"answers_{i:02d}.png"), row_img)
@@ -132,7 +138,13 @@ def extract_cells(
         row_debug_dir = (debug_base / "right" / f"row_{i:02d}") if debug_base else None
         _save_debug_img(row_debug_dir, "row_raw.png", row_img)
 
-        row_img = remove_grid_lines(row_img, min_len_ratio=0.75, max_thickness=3, close_gaps=1)
+        row_img = remove_grid_lines(
+            row_img,
+            mode="h",
+            min_len_ratio=0.75,
+            max_thickness=3,
+            close_gaps=0,  # important: avoid connecting digits to lines
+        )
         _save_debug_img(row_debug_dir, "row_cleaned.png", row_img)
 
         cv2.imwrite(str(out_dir_p / f"repl_{i:02d}.png"), row_img)

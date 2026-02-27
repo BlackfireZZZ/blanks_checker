@@ -60,7 +60,7 @@ def build_ground_truth() -> list[tuple[str, str]]:
             answers.append((f"answers/{row_str}/answers_{row_str}_{col:02d}.png", label))
     # Замена ошибочных ответов: строки 1..10, по 9 клеток
     repl_labels = [
-        "1 E E E E E E E".split(),
+        "1 1 E E E E E E".split(),
         "5 S 2 E E E E E".split(),
         "3 S 2 E E E E E".split(),
         "0 S 8 E E E E E".split(),
