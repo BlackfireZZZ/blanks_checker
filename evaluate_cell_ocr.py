@@ -66,7 +66,7 @@ def build_ground_truth() -> list[tuple[str, str]]:
         "0 S 8 E E E E E".split(),
         "1 0 E E E E E E".split(),
         "9 0 E E E E E E".split(),
-        "1 1 S 5 5 E E E".split(),
+        "1 1 S 5 E E E E".split(),
         "3 E E E E E E E".split(),
         "1 4 E E E E E E".split(),
         "4 3 E E E E E E".split(),

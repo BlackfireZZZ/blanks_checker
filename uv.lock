@@ -133,6 +133,7 @@ dependencies = [
     { name = "pymupdf" },
     { name = "timm" },
     { name = "torch" },
+    { name = "torchvision" },
 ]
 
 [package.optional-dependencies]
@@ -152,6 +153,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
     { name = "timm", specifier = ">=1.0.25" },
     { name = "torch", specifier = ">=2.10.0" },
+    { name = "torchvision", specifier = ">=0.25.0" },
 ]
 provides-extras = ["dev"]
 

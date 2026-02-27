@@ -42,6 +42,17 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+try:
+    import timm
+except Exception as e:  # pragma: no cover
+    raise RuntimeError(
+        "This ResNet version requires timm. Install it:\n"
+        "  pip install timm\n"
+        "If you want torchvision ResNet, switch back to that implementation."
+    ) from e
+
+MNIST_CANVAS = 28
+
 # -----------------------------
 # Hyperparameters (UPDATED)
 # -----------------------------
@@ -88,6 +99,12 @@ MINUS_INK_MIN = 40
 BBOX_PAD_PX = 3  # slightly larger pad to avoid losing thin strokes after stricter threshold
 MNIST_CANVAS = 28
 MNIST_TARGET_MAX_SIDE = 20
+
+# ResNet-specific: build MNIST-like grayscale (not binary) for classification
+BG_NORM_SIGMA = 12  # illumination normalization blur sigma
+CONTRAST_P_LOW = 5
+CONTRAST_P_HIGH = 95
+EPS = 1e-6
 
 # -----------------------------
 # Utilities
@@ -159,6 +176,20 @@ def _write_debug_png(out_dir: Path, name: str, img: np.ndarray) -> None:
 
 def _percentile_u8(gray: np.ndarray, q: float) -> float:
     return float(np.percentile(gray.reshape(-1), q))
+
+def _illumination_normalize(gray_u8: np.ndarray) -> np.ndarray:
+    """
+    Make background more uniform (helps ResNet a lot on scanned cells).
+    Returns uint8 image.
+    """
+    g = gray_u8.astype(np.float32)
+    bg = cv2.GaussianBlur(g, (0, 0), sigmaX=BG_NORM_SIGMA, sigmaY=BG_NORM_SIGMA)
+    bg = np.clip(bg, 1.0, 255.0)
+    norm = cv2.divide(g, bg, scale=255.0)
+    norm = np.clip(norm, 0.0, 255.0).astype(np.uint8)
+    # tiny blur for stability (keeps anti-alias, reduces salt noise)
+    norm = cv2.GaussianBlur(norm, (BLUR_KSIZE, BLUR_KSIZE), 0)
+    return norm
 
 
 # -----------------------------
@@ -262,6 +293,8 @@ def preprocess_cell_to_binary(
     gray_orig = gray.copy()
 
     gray_blur = cv2.GaussianBlur(gray, (BLUR_KSIZE, BLUR_KSIZE), 0)
+    # ResNet classification path uses illumination-normalized grayscale
+    gray_norm = _illumination_normalize(gray_orig)
 
     mask_raw, t, bg = _threshold_percentile(gray_blur, delta=delta)
 
@@ -278,6 +311,7 @@ def preprocess_cell_to_binary(
     debug["T"] = int(t)
     debug["gray_orig"] = gray_orig
     debug["gray"] = gray_blur
+    debug["gray_norm"] = gray_norm
     debug["mask_raw"] = mask_raw
     debug["mask_clean"] = mask
     debug["ink_pixels"] = ink
@@ -384,57 +418,103 @@ def to_mnist_28x28(binary_mask: np.ndarray) -> np.ndarray:
     return canvas
 
 
+def to_mnist_28x28_gray(gray_norm_u8: np.ndarray, binary_mask: np.ndarray) -> np.ndarray:
+    """
+    Build an MNIST-like 28x28 *grayscale* image for ResNet classification.
+
+    Key points:
+    - bbox is taken from the cleaned binary mask
+    - pixels come from illumination-normalized grayscale (NOT binary)
+    - we invert to MNIST convention: digit is bright on dark background
+    - per-crop contrast normalization (percentiles) to match MNIST-like dynamic range
+    - center-of-mass alignment using intensity weights (better than binary COM)
+
+    Returns float32 array in range [0..1], shape (28,28).
+    """
+    bbox = _bbox_from_mask(binary_mask)
+    if bbox is None:
+        return np.zeros((MNIST_CANVAS, MNIST_CANVAS), dtype=np.float32)
+
+    H, W = gray_norm_u8.shape[:2]
+    x1, y1, x2, y2 = _pad_and_clip_bbox(bbox, BBOX_PAD_PX, H, W)
+    crop = gray_norm_u8[y1 : y2 + 1, x1 : x2 + 1]
+    if crop.size == 0:
+        return np.zeros((MNIST_CANVAS, MNIST_CANVAS), dtype=np.float32)
+
+    # MNIST convention: digit bright on dark
+    inv = (255 - crop).astype(np.float32)
+
+    # Robust local contrast normalize (prevents washed-out strokes or too-thick fills)
+    lo = float(np.percentile(inv, CONTRAST_P_LOW))
+    hi = float(np.percentile(inv, CONTRAST_P_HIGH))
+    inv = (inv - lo) / max(hi - lo, EPS)
+    inv = np.clip(inv, 0.0, 1.0)
+
+    ch, cw = inv.shape[:2]
+    max_side = max(ch, cw)
+    scale = float(MNIST_TARGET_MAX_SIDE) / float(max_side)
+    new_w = max(1, int(round(cw * scale)))
+    new_h = max(1, int(round(ch * scale)))
+    interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+    resized = cv2.resize(inv, (new_w, new_h), interpolation=interp)
+
+    canvas = np.zeros((MNIST_CANVAS, MNIST_CANVAS), dtype=np.float32)
+    off_x = (MNIST_CANVAS - new_w) // 2
+    off_y = (MNIST_CANVAS - new_h) // 2
+    x_end = min(MNIST_CANVAS, off_x + new_w)
+    y_end = min(MNIST_CANVAS, off_y + new_h)
+    canvas[off_y:y_end, off_x:x_end] = resized[: (y_end - off_y), : (x_end - off_x)]
+
+    # Weighted center-of-mass (intensity) alignment
+    wsum = float(canvas.sum())
+    if wsum > 1e-6:
+        ys, xs = np.indices(canvas.shape)
+        com_x = float((canvas * xs).sum() / wsum)
+        com_y = float((canvas * ys).sum() / wsum)
+        target = float(MNIST_CANVAS // 2)  # 14
+        dx = target - com_x
+        dy = target - com_y
+        M = np.array([[1.0, 0.0, dx], [0.0, 1.0, dy]], dtype=np.float32)
+        canvas = cv2.warpAffine(
+            canvas,
+            M,
+            (MNIST_CANVAS, MNIST_CANVAS),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=0.0,
+        )
+
+    return np.clip(canvas, 0.0, 1.0)
+
+
 # -----------------------------
 # MNIST model (unchanged; easily swappable)
 # -----------------------------
 
 
-class _LeNetMNIST(nn.Module):
-    def __init__(self) -> None:
-        super().__init__()
-        self.conv1 = nn.Conv2d(1, 32, 5, padding=2)
-        self.conv2 = nn.Conv2d(32, 64, 5, padding=2)
-        self.fc1 = nn.Linear(64 * 7 * 7, 256)
-        self.fc2 = nn.Linear(256, 10)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = F.relu(self.conv1(x))
-        x = F.max_pool2d(x, 2)  # 28->14
-        x = F.relu(self.conv2(x))
-        x = F.max_pool2d(x, 2)  # 14->7
-        x = x.view(x.size(0), -1)
-        x = F.relu(self.fc1(x))
-        return self.fc2(x)
+# -----------------------------
+# MNIST digit classifier (ResNet18; drop-in replacement)
+# Keeps the same public API: MnistDigitClassifier + predict_digit(...)
+# -----------------------------
 
 
-class _LeNetTiny(nn.Module):
-    def __init__(self) -> None:
-        super().__init__()
-        self.conv1 = nn.Conv2d(1, 2, 5, padding=0)
-        self.conv2 = nn.Conv2d(2, 6, 5, padding=0)
-        self.fc1 = nn.Linear(96, 32)  # 6*4*4
-        self.fc2 = nn.Linear(32, 10)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = F.relu(self.conv1(x))  # 28->24
-        x = F.max_pool2d(x, 2)  # 24->12
-        x = F.relu(self.conv2(x))  # 12->8
-        x = F.max_pool2d(x, 2)  # 8->4
-        x = x.view(x.size(0), -1)  # 6*4*4=96
-        x = F.relu(self.fc1(x))
-        return self.fc2(x)
+def _build_resnet18_mnist() -> nn.Module:
+    """
+    Build ResNet18 exactly like the HuggingFace snippet you posted (timm).
+    This is the safest way to match those weights.
+    """
+    net = timm.create_model("resnet18", pretrained=False, num_classes=10)
+    net.conv1 = torch.nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
+    return net
 
 
 def _build_model_for_state_dict(state: dict) -> nn.Module:
-    w = state.get("conv1.weight", None)
-    if w is None:
-        raise RuntimeError("state_dict is missing key conv1.weight")
-    out_ch = int(w.shape[0])
-    if out_ch == 2:
-        return _LeNetTiny()
-    if out_ch == 32:
-        return _LeNetMNIST()
-    raise RuntimeError(f"Unknown architecture: conv1.out_channels={out_ch}")
+    """
+    ResNet-only builder (timm).
+    """
+    if "conv1.weight" not in state:
+        raise RuntimeError("Weights do not contain conv1.weight; not a ResNet18 MNIST checkpoint?")
+    return _build_resnet18_mnist()
 
 
 @dataclass(frozen=True)
@@ -445,7 +525,7 @@ class MnistPrediction:
 
 class MnistDigitClassifier:
     """
-    Loads a pretrained MNIST digit classifier from a .pt file and runs CPU inference.
+    Loads a pretrained MNIST digit classifier from a .pt/.pth file and runs CPU inference.
 
     Expected input: 28×28 float array in range 0..1 where digit/ink is high (white on black).
     """
@@ -457,8 +537,20 @@ class MnistDigitClassifier:
             raise FileNotFoundError(f"Weights file not found: {weights_path}")
 
         state = torch.load(weights_path, map_location=self.device)
-        if isinstance(state, dict) and "state_dict" in state and isinstance(state["state_dict"], dict):
-            state = state["state_dict"]
+
+        # Common wrappers: {"state_dict": {...}} or {"model": {...}}
+        if isinstance(state, dict):
+            if "state_dict" in state and isinstance(state["state_dict"], dict):
+                state = state["state_dict"]
+            elif "model" in state and isinstance(state["model"], dict):
+                state = state["model"]
+
+        if not isinstance(state, dict):
+            raise RuntimeError("Expected a state_dict (dict of tensors) in the weights file.")
+
+        # Sometimes keys are prefixed (e.g., 'module.' from DataParallel)
+        if any(k.startswith("module.") for k in state.keys()):
+            state = {k[len("module."):]: v for k, v in state.items()}
 
         self.model = _build_model_for_state_dict(state).to(self.device)
         self.model.load_state_dict(state, strict=True)
@@ -466,7 +558,11 @@ class MnistDigitClassifier:
 
     @torch.inference_mode()
     def predict_digit(self, mnist_28x28_float01: np.ndarray) -> MnistPrediction:
-        x = torch.from_numpy(mnist_28x28_float01.astype(np.float32)).unsqueeze(0).unsqueeze(0).to(self.device)
+        # Match HF MNIST preprocessing: Normalize((0.1307,), (0.3081,))
+        x = mnist_28x28_float01.astype(np.float32)
+        x = np.clip(x, 0.0, 1.0)
+        x = (x - 0.1307) / 0.3081
+        x = torch.from_numpy(x).unsqueeze(0).unsqueeze(0).to(self.device)
         logits = self.model(x)
         probs = torch.softmax(logits, dim=1)[0]
         digit = int(torch.argmax(probs).item())
@@ -479,7 +575,7 @@ _GLOBAL_CLF_WEIGHTS: Optional[str] = None
 
 
 def _get_default_weights_path() -> str:
-    return os.environ.get("CELL_OCR_MNIST_WEIGHTS", "mnist-classifier.pt")
+    return os.environ.get("CELL_OCR_MNIST_WEIGHTS", "resnet18_mnist.pth")
 
 
 def _get_classifier(weights_path: Optional[str | Path] = None) -> MnistDigitClassifier:
@@ -499,15 +595,16 @@ def predict_digit(mnist_28x28: np.ndarray, *, weights_path: Optional[str | Path]
     """
     if mnist_28x28.shape != (MNIST_CANVAS, MNIST_CANVAS):
         raise ValueError(f"Expected 28x28, got {mnist_28x28.shape}")
+    # Accept uint8 0..255 or float 0..1. Classifier will apply MNIST Normalize.
     if mnist_28x28.dtype == np.uint8:
         x = mnist_28x28.astype(np.float32) / 255.0
     else:
         x = mnist_28x28.astype(np.float32)
         x = np.clip(x, 0.0, 1.0)
+
     clf = _get_classifier(weights_path=weights_path)
     pred = clf.predict_digit(x)
     return int(pred.digit)
-
 
 # -----------------------------
 # Public API
@@ -630,11 +727,13 @@ def recognize_cell(
     if minus_ok:
         return "-"
 
-    mnist_u8 = to_mnist_28x28(mask)
+    # For ResNet: build MNIST-like grayscale (not binary) from illumination-normalized gray.
+    mnist_f01 = to_mnist_28x28_gray(dbg["gray_norm"], mask)
     if debug and debug_out_dir is not None:
-        _write_debug_png(Path(debug_out_dir), "04_mnist_28.png", mnist_u8)
+        mnist_vis = (np.clip(mnist_f01, 0.0, 1.0) * 255.0).astype(np.uint8)
+        _write_debug_png(Path(debug_out_dir), "04_mnist_28_gray.png", mnist_vis)
 
-    d = predict_digit(mnist_u8, weights_path=weights_path)
+    d = predict_digit(mnist_f01, weights_path=weights_path)
     return str(d)
 
 
@@ -646,7 +745,7 @@ def recognize_cell(
 def _cli() -> int:
     p = argparse.ArgumentParser(description="Recognize a single answer-sheet cell symbol.")
     p.add_argument("image", help="Path to a cell image (png/jpg).")
-    p.add_argument("--weights", default="mnist-classifier.pt", help="Path to MNIST weights (.pt). Defaults to env/CWD.")
+    p.add_argument("--weights", default="resnet18_mnist.pth", help="Path to ResNet18 MNIST weights. Defaults to env/CWD.")
     p.add_argument("--debug-out", default=None, help="Directory to dump debug PNGs.")
     args = p.parse_args()
 
