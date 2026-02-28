@@ -159,6 +159,10 @@ class CorrectionSubmission(BaseModel):
         default=None,
         description="If set, update this existing record instead of creating a new one",
     )
+    verified: bool | None = Field(
+        default=None,
+        description="If set when updating (record_id), set blank as verified/unverified (works for main admin too)",
+    )
 
 
 class SavedRecordIdItem(BaseModel):

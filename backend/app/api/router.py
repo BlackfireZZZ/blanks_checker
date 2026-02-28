@@ -522,6 +522,13 @@ async def save_corrected_blank(
                 page=payload.page,
                 source_url=payload.aligned_image_url,
             )
+            if payload.verified is not None:
+                await set_blank_verified(
+                    session,
+                    blank_id=payload.record_id,
+                    verified=payload.verified,
+                    verified_by=current_user.login,
+                )
         except LookupError:
             raise HTTPException(status_code=404, detail="Blank not found")
     else:

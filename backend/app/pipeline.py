@@ -59,7 +59,7 @@ def main(
 if __name__ == "__main__":
     import json
     res = main(
-        pdf_path=r"examples/3993.pdf",
+        pdf_path=r"examples/1410.pdf",
         aligned_path=None,
         rows_out_dir="rows_out",
         page_index=0,
