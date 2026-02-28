@@ -1,106 +1,151 @@
 # blanks_checker
 
-Веб-приложение для автоматического чтения бланков ответов (тестовых форм). Проект выравнивает отсканированный бланк по чёрным маркерам, бинаризует страницу и вырезает области: вариант, дата, регистрационный номер и строки ответов/замен.
+Веб-приложение для автоматического чтения бланков ответов (тестовых форм). Выравнивает отсканированный бланк по чёрным маркерам, бинаризует страницу, вырезает области (вариант, дата, регистрационный номер, строки ответов/замен) и распознаёт символы в ячейках с помощью нейросети (OCR). Результаты хранятся в БД, доступны веб-интерфейс и экспорт в Excel.
+
+## Архитектура
+
+- **Backend**: FastAPI, пайплайн обработки (PDF → выравнивание → вырезка ячеек → OCR), PostgreSQL, Redis, S3-совместимое хранилище (MinIO).
+- **Frontend**: React 19, Vite, TypeScript, React Router, shadcn/ui.
+- **Развёртывание**: Docker Compose (backend, frontend через nginx, PostgreSQL, MinIO, Redis).
 
 ## Структура проекта
 
 ```
 blanks_checker/
-├── main.py           # Точка входа
-├── alignment.py      # Выравнивание бланка по маркерам
-├── rows.py           # Поиск строк ответов и вырезка ячеек
-├── pdf_loader.py     # Загрузка страниц PDF в изображения
-├── image_utils.py    # Бинаризация и обрезка изображений
-├── test.py           # Тесты
-├── pyproject.toml    # Зависимости и настройки проекта
-├── uv.lock           # Lock-файл зависимостей (uv)
-├── aligned.png       # Результат выравнивания (генерируется)
-├── examples/         # Примеры PDF-бланков
-│   ├── 3993.pdf
-│   └── БЛАНК ОТВЕТОВ МАТЕМАТИКА.pdf
-└── rows_out/         # Выходные вырезки ячеек (генерируется)
-    ├── variant.png   # Область «Вариант»
-    ├── date.png      # Область «Дата»
-    ├── reg_number.png # Область «Рег. номер»
-    ├── answers_01.png … answers_10.png  # Строки ответов 1–10
-    └── repl_01.png … repl_10.png        # Строки замен 1–10
+├── backend/                    # API и пайплайн обработки
+│   ├── app/
+│   │   ├── main.py             # FastAPI-приложение, роуты под /api
+│   │   ├── pipeline.py         # CLI: выравнивание + вырезка (для обратной совместимости)
+│   │   ├── alignment/          # Выравнивание по маркерам
+│   │   │   ├── align.py        # align_form_from_image, align_pdf_form
+│   │   │   ├── markers.py      # detect_black_square_markers, order_points
+│   │   │   └── warp.py         # warp_keep_full_page
+│   │   ├── rows/               # Поиск строк и вырезка ячеек
+│   │   │   ├── extract.py      # extract_cells_to_result, extract_cells
+│   │   │   ├── cells.py        # split_cells, сохранение вырезок
+│   │   │   ├── grid.py         # detect_rows_by_grid
+│   │   │   ├── header.py       # crop_to_grid_only (заголовочные ROI)
+│   │   │   ├── morphology.py  # Адаптивная бинаризация, линии сетки
+│   │   │   └── line_clean.py  # remove_grid_lines
+│   │   ├── ocr/                # Распознавание символов в ячейках
+│   │   │   ├── cell_ocr.py     # recognize_cell (нейросеть)
+│   │   │   └── resnet18_mnist.pth
+│   │   ├── services/
+│   │   │   ├── pipeline.py     # run_blanks_pipeline (in-memory: PDF bytes → результат)
+│   │   │   ├── pdf_loader.py   # pdf_bytes_to_bgr, pdf_page_count
+│   │   │   ├── recognized_blanks.py
+│   │   │   ├── auth.py
+│   │   │   ├── export_blanks.py
+│   │   │   └── number_validation.py
+│   │   ├── api/                # Роуты: auth, blank-check, blanks CRUD, export
+│   │   ├── db/                 # SQLAlchemy, модели, сессии
+│   │   ├── storage/            # S3-клиент (загрузка выровненных изображений)
+│   │   ├── preprocessing/
+│   │   │   └── image_utils.py  # Бинаризация, crop_rel
+│   │   └── schemas/
+│   ├── alembic/                # Миграции БД
+│   ├── pyproject.toml
+│   └── uv.lock
+├── frontend/
+│   ├── src/
+│   │   ├── pages/              # UploadPage, ListPage, EditPage, AuthPage, UsersPage
+│   │   ├── components/         # CorrectionForm, ProtectedRoute, UI (shadcn)
+│   │   └── api/                # blankCheck, auth, backendHealth
+│   ├── package.json
+│   └── Dockerfile              # Сборка статики + nginx
+├── docker-compose.yml          # backend, db, minio, redis, nginx
+├── .env.example
+└── README.md
 ```
 
-## Описание модулей
+## Запуск
 
-### `main.py`
-Точка входа. Выполняет пайплайн:
-1. Загрузка страницы PDF → бинаризация (внутри загрузки/выравнивания) → выравнивание по маркерам → сохранение в `aligned.png`.
-2. Вырезка ячеек из выравненного изображения в каталог `rows_out/`.
+### Через Docker Compose (рекомендуется)
 
-Параметры: путь к PDF, путь к выровненному изображению, каталог вывода, номер страницы, масштаб, размер выхода, отступ от краёв.
+1. Скопируйте `.env.example` в `.env` и при необходимости отредактируйте (пароли, JWT_SECRET и т.д.).
+2. Запустите сервисы:
 
-### `alignment.py`
-Выравнивание бланка по чёрным угловым маркерам.
+```bash
+docker compose up -d
+```
 
-- **`order_points(pts)`** — упорядочивает 4 точки в порядке: верхний левый, верхний правый, нижний правый, нижний левый.
-- **`_find_marker_in_roi()`** — ищет тёмный квадратный маркер в заданной ROI (порог, морфология, connected components, фильтры по площади, соотношению сторон и заполнению).
-- **`detect_black_square_markers()`** — находит маркеры в четырёх угловых зонах; при 3 найденных восстанавливает 4-й как вершину параллелограмма. Возвращает центры маркеров и средний размер.
-- **`warp_keep_full_page()`** — перспективное преобразование по 4 точкам маркеров в фиксированный размер с отступом `margin_px`.
-- **`align_pdf_form()`** — загружает страницу через `pdf_loader`, детектирует маркеры, выравнивает и сохраняет изображение.
+Приложение будет доступно по адресу **http://localhost** (порт 80). Фронтенд — `/`, API — `/api/`.
 
-### `rows.py`
-Поиск строк ответов на выравненном бланке и вырезка областей.
+### Локально (разработка)
 
-- **`HEADER_ROIS`** — словарь относительных координат (доли 0–1) для вырезки заголовка: вариант, дата, рег. номер.
-- **`detect_answer_rows()`** — находит 20 длинных прямоугольников (адаптивная бинаризация, контуры, фильтры по площади, высоте, aspect ratio), делит их на 10 слева (ответы) и 10 справа (замена), возвращает два списка bbox.
-- **`save_crop()`** — сохраняет вырезку по bbox в файл.
-- **`extract_cells()`** — читает выравненное изображение, сохраняет заголовочные ROI (`variant.png`, `date.png`, `reg_number.png`) и 20 строк (`answers_01.png`–`answers_10.png`, `repl_01.png`–`repl_10.png`). Использует `image_utils.crop_rel` для заголовка.
+**Backend** (из корня репозитория):
 
-### `pdf_loader.py`
-Загрузка страниц PDF в изображения в формате BGR (OpenCV).
+```bash
+cd backend
+uv sync
+# Поднять PostgreSQL, MinIO, Redis (или через docker compose up -d db minio redis)
+# Заполнить .env (DB_HOST=localhost и т.д., S3_ENDPOINT_URL=http://localhost:9000)
+uv run alembic upgrade head
+uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
 
-- **`pdf_page_to_bgr()`** — открывает PDF (PyMuPDF), рендерит одну страницу с заданным `zoom`, возвращает `numpy`-массив в формате BGR (uint8).
+**Frontend**:
 
-### `image_utils.py`
-Вспомогательные операции над изображениями.
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
-- **`binarize_image()`** — бинаризация (Gaussian blur + Otsu), результат в BGR с каналами 0/255 для совместимости с остальным кодом.
-- **`crop_rel()`** — обрезка по относительным координатам `x1, y1, x2, y2` в диапазоне [0, 1] от размеров изображения.
+После этого фронт обычно на http://localhost:5173; API — на http://localhost:8000 (нужно настроить прокси или `VITE_API_URL` при необходимости).
+
+### CLI-пайплайн (без веб-сервера)
+
+Из каталога `backend`:
+
+```bash
+uv run python -m app.pipeline
+```
+
+По умолчанию читается `examples/1410.pdf` (или другой путь в коде), результат выравнивания и вырезки можно сохранять, передавая `aligned_path` и `rows_out_dir`. Для полного in-memory пайплайна с OCR используйте `app.services.pipeline.run_blanks_pipeline`.
+
+## Переменные окружения
+
+Основные переменные (см. `.env.example`):
+
+| Переменная | Описание |
+|------------|----------|
+| `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` | PostgreSQL |
+| `ADMIN_LOGIN`, `ADMIN_PASSWORD` | Учётные данные первого админа (bootstrap) |
+| `JWT_SECRET` | Секрет для JWT (обязательно сменить в продакшене) |
+| `S3_ENDPOINT_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_BUCKET_NAME` | S3/MinIO |
+| `REDIS_HOST`, `REDIS_PORT` | Redis |
+
+## API (кратко)
+
+- `GET /api/ready` — healthcheck.
+- `POST /api/auth/login` — вход (login, password) → JWT.
+- `GET /api/auth/me` — текущий пользователь (нужен Bearer token).
+- `POST /api/blank-check`, `POST /api/v1/blank-check` — загрузка PDF, указание страницы → распознавание бланка (вариант, дата, рег. номер, ответы, замена).
+- `POST /api/v1/blank-check/multi` — обработка всех страниц PDF; при ошибках по страницам возвращается 422 с данными для ручной проверки.
+- `POST /api/v1/blank-check/corrections` — сохранение исправлений после ручной проверки.
+- `GET /api/v1/blanks` — список распознанных бланков (фильтры: поиск, только не проверенные).
+- `GET /api/v1/blanks/{id}` — один бланк для редактирования.
+- `PATCH /api/v1/blanks/{id}/verified` — установка флага «проверено».
+- `DELETE /api/v1/blanks/{id}` — удаление бланка.
+- `GET /api/v1/export` — скачивание всех бланков в виде Excel.
+- `GET /api/files/{object_key}` — прокси к S3 (только для авторизованных).
+
+## Модули backend (кратко)
+
+- **alignment**: поиск чёрных угловых маркеров (`markers`), упорядочивание точек, перспективное преобразование (`warp`), выравнивание по PDF или по изображению (`align`).
+- **rows**: относительные ROI заголовка (вариант, дата, рег. номер), поиск строк ответов/замен по сетке (`grid`, `morphology`), разбиение на ячейки (`cells`), вырезка в результат или в файлы (`extract`).
+- **ocr**: распознавание символа в одной ячейке (E, -, 0–9, S) через нейросеть.
+- **services/pipeline**: `run_blanks_pipeline(pdf_bytes, ...)` — загрузка страницы, выравнивание, вырезка ячеек, OCR по всем полям; возвращает структурированный словарь и опционально PNG выровненной страницы.
 
 ## Отладочные изображения (debug)
 
-Ниже — основные картинки, которые сохраняются на этапах пайплайна, и что на них должно быть.
+При `debug=True` пайплайн может сохранять отладочные картинки. Основные места:
 
-| Имя / шаблон файла | Что это | Что тут должно быть |
-| --- | --- | --- |
-| `debug/debug_bw_tl.png`, `debug/debug_bw_tr.png`, `debug/debug_bw_br.png`, `debug/debug_bw_bl.png` | Бинаризованные ROI в четырёх углах страницы для поиска чёрных маркеров | Чёрный прямоугольник маркера почти сплошной, остальной фон/линии светлее или разорваны |
-| `debug/aligned_raw.png` | Результат выравнивания страницы по маркерам до дальнейшей обработки | Весь бланк целиком, маркеры лежат на одинаковом расстоянии от краёв, сетка примерно вертикально/горизонтально |
-| `rows_out/_debug_header/variant/roi_raw.png`, `.../date/roi_raw.png`, `.../reg_number/roi_raw.png` | Сырой вырезанный заголовочный блок (вариант/дата/рег. номер) | В ROI видно подпись поля и прямоугольную сетку клеточек |
-| `rows_out/_debug_header/.../roi_bw_inv.png` | Адаптивная бинаризация ROI заголовка, инверсия (клетки/линии белые на чёрном) | Сетка клеток хорошо видна сплошными/почти сплошными белыми линиями |
-| `rows_out/_debug_header/.../roi_h_lines.png` | Выделенные горизонтальные линии сетки заголовка | Белые горизонтальные штрихи в местах линий клеток, минимум шума |
-| `rows_out/_debug_header/.../roi_v_lines.png` | Выделенные вертикальные линии сетки заголовка | Белые вертикальные штрихи в местах линий клеток, минимум шума |
-| `rows_out/_debug_header/.../roi_grid_bbox.png` | Сырой ROI заголовка с обведённым красным прямоугольником «только клетки» | Красная рамка плотно обхватывает внутреннюю сетку клеток, без подписей и полей вокруг |
-| `rows_out/_debug_grid/left/table_roi_raw.png`, `.../right/table_roi_raw.png` | Сырой ROI блока строк «Ответы» (left) и «Замена» (right) | Видны прямоугольники строк с номерами слева и сеткой клеток справа |
-| `rows_out/_debug_grid/.../table_bw_inv.png` | Адаптивная бинаризация блока строк, инверсия (линии белые на чёрном) | Прямоугольники строк и вертикальные разделители чётко видны как белые линии |
-| `rows_out/_debug_grid/.../table_h_lines.png` | Выделенные горизонтальные линии прямоугольников строк | Только горизонтальные стороны прямоугольников строк (почти без текста и шума) |
-| `rows_out/_debug_grid/.../table_v_lines.png` | Выделенные вертикальные линии сетки внутри блока строк | Только вертикальные линии сетки и границы блока, без текста |
-| `rows_out/_debug_grid/.../table_proj_y.png` | 1D-проекция по Y (сумма по строкам) как картинка | Светлые горизонтальные полосы в местах, где есть горизонтальные линии прямоугольников строк |
-| `rows_out/_debug_grid/.../table_proj_x.png` | 1D-проекция по X (сумма по столбцам) как картинка | Светлые вертикальные полосы в местах вертикальных линий сетки |
-| `rows_out/_debug_grid/.../rows_bbox_full.png` | Полное выровненное изображение с красными рамками по найденным строкам | Все 10 строк в левом и правом блоке обведены красными прямоугольниками по клеточной части (без колонки «№») |
+- **alignment**: `debug_dir/debug_bw_*.png` (бинаризованные ROI углов), `debug_dir/aligned_raw.png`.
+- **rows**: `rows_out/_debug_header/` (вариант, дата, рег. номер — roi_raw, roi_bw_inv, линии сетки, grid_bbox), `rows_out/_debug_grid/` (left/right — table_roi_raw, table_bw_inv, линии, проекции, rows_bbox_full).
 
 ## Зависимости
 
-- Python ≥ 3.10
-- opencv-python ≥ 4.9
-- numpy ≥ 1.26
-- pymupdf ≥ 1.24
-
-Установка (например, через uv):
-
-```bash
-uv sync
-```
-
-Запуск:
-
-```bash
-uv run python main.py
-```
-
-По умолчанию обрабатывается `examples/3993.pdf`, результат выравнивания — `aligned.png`, вырезки — в `rows_out/`.
+- **Backend**: Python ≥ 3.10, OpenCV, NumPy, PyMuPDF, PyTorch (CPU), FastAPI, SQLAlchemy, asyncpg, aioboto3, Alembic, bcrypt, python-jose, openpyxl и др. (см. `backend/pyproject.toml`). Установка: `cd backend && uv sync`.
+- **Frontend**: Node.js, React 19, Vite, TypeScript, Tailwind, shadcn/ui, axios, react-router-dom, zod и др. (см. `frontend/package.json`). Установка: `cd frontend && npm install`.

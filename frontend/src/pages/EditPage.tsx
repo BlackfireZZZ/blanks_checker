@@ -186,6 +186,7 @@ export function EditPage() {
         <CorrectionForm
           payload={payload}
           recordId={recordId}
+          verified={verified}
           onSuccess={handleSuccess}
         />
       </div>

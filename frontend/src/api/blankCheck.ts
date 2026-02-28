@@ -104,6 +104,7 @@ export interface CorrectionSubmission {
   fields: CorrectionFieldSubmission[];
   aligned_image_url?: string | null;
   record_id?: number | null;
+  verified?: boolean | null;
 }
 
 export interface ApiErrorPayload {
@@ -421,8 +422,14 @@ export async function setBlankVerifiedApi(
     const text = await res.text();
     try {
       const body = text ? (JSON.parse(text) as Record<string, unknown>) : {};
-      const detail = body.detail;
-      const msg = typeof detail === "string" ? detail : text || `HTTP ${res.status}`;
+      const rawDetail = body.detail;
+      const err = body.error as ApiErrorPayload | undefined;
+      const msg =
+        (err && typeof err.message === "string")
+          ? err.message
+          : typeof rawDetail === "string"
+            ? rawDetail
+            : text || `HTTP ${res.status}`;
       throw new ApiError(res.status, { code: "HTTP_ERROR", message: msg, details: undefined });
     } catch (e) {
       if (e instanceof ApiError) throw e;

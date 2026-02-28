@@ -19,10 +19,11 @@ import { fileUrlWithAuth } from "@/api/auth";
 export interface CorrectionFormProps {
   payload: CorrectionPayload;
   recordId?: number | null;
+  verified?: boolean | null;
   onSuccess?: (result: BlankCheckResult) => void;
 }
 
-export function CorrectionForm({ payload, recordId, onSuccess }: CorrectionFormProps) {
+export function CorrectionForm({ payload, recordId, verified, onSuccess }: CorrectionFormProps) {
   const [fieldStates, setFieldStates] = useState<Record<string, FieldReview>>({});
   const [activeFieldId, setActiveFieldId] = useState<string | null>(null);
   const [activeCellIndex, setActiveCellIndex] = useState<number | null>(null);
@@ -228,6 +229,7 @@ export function CorrectionForm({ payload, recordId, onSuccess }: CorrectionFormP
         })),
         aligned_image_url: payload.aligned_image_url ?? undefined,
         record_id: recordId ?? undefined,
+        ...(recordId != null && verified !== undefined && verified !== null ? { verified } : {}),
       };
       const data = await submitCorrections(submission);
       onSuccess?.(data);
