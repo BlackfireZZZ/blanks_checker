@@ -25,3 +25,11 @@ class UserListItem(BaseModel):
     id: int
     login: str
     created_at: str
+
+
+class UserCreateResponse(BaseModel):
+    """Response for create user: same as list item + password (so main admin can see it)."""
+    id: int
+    login: str
+    created_at: str
+    password: str

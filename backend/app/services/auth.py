@@ -106,3 +106,15 @@ async def create_user(
     await session.flush()
     await session.refresh(user)
     return user
+
+
+async def delete_user(
+    session: AsyncSession, user_id: int
+) -> bool:
+    """Delete user by id. Returns True if deleted, False if not found. Does not delete main admin (not in DB)."""
+    result = await session.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if user is None:
+        return False
+    await session.delete(user)
+    return True

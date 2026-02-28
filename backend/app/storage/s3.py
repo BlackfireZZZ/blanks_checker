@@ -1,5 +1,6 @@
 import base64
 import io
+import json
 from contextlib import asynccontextmanager
 from typing import Any, BinaryIO, Optional
 
@@ -65,6 +66,31 @@ class S3Storage:
                 logger.error(f"Error checking bucket: {e}")
                 raise
 
+        if settings.S3_PUBLIC_READ:
+            await self._ensure_public_read_policy()
+
+    async def _ensure_public_read_policy(self):
+        """Включает публичное чтение объектов бакета (для бессрочных ссылок)."""
+        policy = {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Principal": "*",
+                    "Action": "s3:GetObject",
+                    "Resource": f"arn:aws:s3:::{self.bucket_name}/*",
+                }
+            ],
+        }
+        try:
+            async with self.get_client() as client:
+                await client.put_bucket_policy(
+                    Bucket=self.bucket_name, Policy=json.dumps(policy)
+                )
+                logger.info(f"Bucket {self.bucket_name}: public read policy set")
+        except ClientError as e:
+            logger.warning("Could not set bucket public read policy: %s", e)
+
     async def upload_file(
         self,
         file_obj: BinaryIO,
@@ -129,18 +155,11 @@ class S3Storage:
                 return False
             raise
 
-    async def get_file_url(self, object_key: str, expires_in: int = 3600) -> str:
-        async with self.get_client() as client:
-            presigned_url = await client.generate_presigned_url(
-                "get_object",
-                Params={"Bucket": self.bucket_name, "Key": object_key},
-                ExpiresIn=expires_in,
-            )
-            if self.endpoint_url != self.public_url:
-                presigned_url = presigned_url.replace(
-                    self.endpoint_url, self.public_url
-                )
-            return presigned_url
+    async def get_file_url(self, object_key: str, expires_in: Optional[int] = None) -> str:
+        if settings.S3_PUBLIC_READ:
+            return f"{self.public_url.rstrip('/')}/{self.bucket_name}/{object_key}"
+        # Прокси через backend: без аутентификации запрос в S3 не идёт.
+        return f"/api/files/{object_key}"
 
     async def list_files(self, prefix: str = "") -> list[dict]:
         files = []

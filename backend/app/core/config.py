@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     S3_REGION: str = "us-east-1"
     S3_BUCKET_NAME: str = "blanks-artifacts"
     S3_USE_SSL: bool = False
+    # Срок жизни presigned URL (сек). MinIO/S3 макс. 7 дней (604800).
+    S3_PRESIGNED_EXPIRES_SECONDS: int = 604800
+    # Если True, get_file_url возвращает простой URL без подписи (без срока). Нужна публичная политика бакета.
+    S3_PUBLIC_READ: bool = False
 
     ADMIN_LOGIN: str = ""
     ADMIN_PASSWORD: str = ""

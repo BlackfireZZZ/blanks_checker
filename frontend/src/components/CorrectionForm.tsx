@@ -14,6 +14,7 @@ import {
   isCorrectionPayload,
 } from "@/api/blankCheck";
 import { formatDate } from "@/utils/format";
+import { fileUrlWithAuth } from "@/api/auth";
 
 export interface CorrectionFormProps {
   payload: CorrectionPayload;
@@ -219,6 +220,7 @@ export function CorrectionForm({ payload, recordId, onSuccess }: CorrectionFormP
     try {
       const submission = {
         page: payload.page,
+        source_filename: payload.source_filename ?? undefined,
         fields: Object.values(fieldStates).map((field) => ({
           field_id: field.field_id,
           joined_value: field.proposed_joined,
@@ -264,12 +266,12 @@ export function CorrectionForm({ payload, recordId, onSuccess }: CorrectionFormP
       <CardContent className="p-0 w-full flex-1 min-h-0 flex flex-col overflow-hidden">
         <div className="flex flex-col md:flex-row flex-1 min-h-0 overflow-hidden w-full">
           {/* Слева — оригинал страницы (всегда виден, без прокрутки) */}
-          <aside className="w-full md:w-[380px] md:min-w-[340px] md:max-w-[45%] md:flex-shrink-0 flex flex-col p-4 md:p-5 bg-muted/25 border-b md:border-b-0 md:border-r overflow-hidden min-h-0">
+          <aside className="w-full md:w-[520px] md:min-w-[420px] md:max-w-[50%] md:flex-shrink-0 flex flex-col p-4 md:p-5 bg-muted/25 border-b md:border-b-0 md:border-r overflow-hidden min-h-0">
             <p className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3 shrink-0">Оригинал страницы</p>
             {payload.aligned_image_url ? (
-              <div className="rounded-xl border border-border/80 bg-card/50 shadow-sm overflow-hidden flex-1 min-h-0 flex items-center justify-center">
+              <div className="rounded-xl border border-border/80 bg-card/50 shadow-sm overflow-hidden flex-1 min-h-[60vh] flex items-center justify-center">
                 <img
-                  src={payload.aligned_image_url}
+                  src={fileUrlWithAuth(payload.aligned_image_url)}
                   alt="Страница бланка для сверки"
                   className="max-w-full max-h-full w-auto h-auto object-contain block"
                 />

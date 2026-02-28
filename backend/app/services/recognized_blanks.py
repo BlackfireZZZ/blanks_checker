@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -33,12 +34,16 @@ def blank_to_list_item(rec: RecognizedBlank) -> BlankListItem:
     date = _blank_to_symbol_list(rec, "date", 8)
     reg_number = _blank_to_symbol_list(rec, "reg_number", 8)
     created_at = rec.created_at.isoformat() if rec.created_at else ""
+    verified_at = rec.verified_at.isoformat() if rec.verified_at else None
     return BlankListItem(
         id=rec.id,
         source_filename=rec.source_filename,
         source_url=rec.source_url,
         page_num=rec.page_num,
         created_at=created_at,
+        verified=rec.verified,
+        verified_at=verified_at,
+        verified_by=rec.verified_by,
         variant=variant,
         date=date,
         reg_number=reg_number,
@@ -69,25 +74,34 @@ def blank_to_edit_response(rec: RecognizedBlank) -> BlankEditResponse:
         answers=answers,
         repl=repl,
     )
+    verified_at = rec.verified_at.isoformat() if rec.verified_at else None
     return BlankEditResponse(
         record_id=rec.id,
         page=payload.page,
         aligned_image_url=payload.aligned_image_url,
         fields=payload.fields,
+        verified=rec.verified,
+        verified_at=verified_at,
+        verified_by=rec.verified_by,
     )
 
 
 async def list_blanks(
     session: AsyncSession,
     search: str | None = None,
+    unchecked_only: bool = False,
 ) -> list[BlankListItem]:
-    """Load list of RecognizedBlank ordered by id desc, optionally filtered by search."""
+    """Load list of RecognizedBlank ordered by id desc, optionally filtered by search and unchecked only."""
     q = select(RecognizedBlank).order_by(RecognizedBlank.id.desc())
     if search and search.strip():
         term = f"%{search.strip()}%"
         q = q.where(
             (RecognizedBlank.source_filename.ilike(term))
             | (RecognizedBlank.source_url.ilike(term))
+        )
+    if unchecked_only:
+        q = q.where(
+            (RecognizedBlank.verified.is_(False)) | (RecognizedBlank.verified.is_(None))
         )
     result = await session.execute(q)
     rows = result.scalars().all()
@@ -106,6 +120,21 @@ async def get_blank_by_id(
     if rec is None:
         return None
     return blank_to_edit_response(rec)
+
+
+async def delete_blank(
+    session: AsyncSession,
+    blank_id: int,
+) -> bool:
+    """Delete RecognizedBlank by id. Returns True if deleted, False if not found."""
+    result = await session.execute(
+        select(RecognizedBlank).where(RecognizedBlank.id == blank_id)
+    )
+    rec = result.scalar_one_or_none()
+    if rec is None:
+        return False
+    await session.delete(rec)
+    return True
 
 
 async def save_recognized_blank(
@@ -211,4 +240,24 @@ async def update_recognized_blank(
 
     await session.flush()
     return rec.id
+
+
+async def set_blank_verified(
+    session: AsyncSession,
+    blank_id: int,
+    verified: bool,
+    verified_by: str,
+) -> bool:
+    """Set verified flag on a blank. Returns True if updated, False if not found."""
+    result = await session.execute(
+        select(RecognizedBlank).where(RecognizedBlank.id == blank_id)
+    )
+    rec = result.scalar_one_or_none()
+    if rec is None:
+        return False
+    rec.verified = verified
+    rec.verified_at = datetime.now(timezone.utc) if verified else None
+    rec.verified_by = verified_by if verified else None
+    await session.flush()
+    return True
 

@@ -9,8 +9,11 @@ import { AppNav } from "@/components/AppNav";
 import {
   fetchUsersList,
   createUserApi,
+  deleteUserApi,
   type UserListItem,
 } from "@/api/auth";
+import { useCurrentUser } from "@/hooks/useCurrentUser";
+import { Trash2 } from "lucide-react";
 
 function formatCreatedAt(iso: string): string {
   if (!iso) return "—";
@@ -29,6 +32,7 @@ function formatCreatedAt(iso: string): string {
 }
 
 export function UsersPage() {
+  const { user: currentUser } = useCurrentUser();
   const [list, setList] = useState<UserListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -37,6 +41,9 @@ export function UsersPage() {
   const [password, setPassword] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  /** Пароли только что созданных пользователей (видны главному админу) */
+  const [createdPasswords, setCreatedPasswords] = useState<Record<number, string>>({});
+  const [deletingId, setDeletingId] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -70,7 +77,8 @@ export function UsersPage() {
     setCreateError(null);
     setCreating(true);
     try {
-      await createUserApi(loginName.trim(), password);
+      const created = await createUserApi(loginName.trim(), password);
+      setCreatedPasswords((prev) => ({ ...prev, [created.id]: created.password }));
       setLoginName("");
       setPassword("");
       await load();
@@ -78,6 +86,25 @@ export function UsersPage() {
       setCreateError(err instanceof Error ? err.message : "Ошибка создания");
     } finally {
       setCreating(false);
+    }
+  };
+
+  const handleDelete = async (userId: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!window.confirm("Удалить этого пользователя?")) return;
+    setDeletingId(userId);
+    try {
+      await deleteUserApi(userId);
+      setCreatedPasswords((prev) => {
+        const next = { ...prev };
+        delete next[userId];
+        return next;
+      });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка удаления");
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -165,7 +192,11 @@ export function UsersPage() {
                     <tr className="border-b text-left">
                       <th className="p-2 font-medium">ID</th>
                       <th className="p-2 font-medium">Логин</th>
+                      {currentUser?.is_admin && (
+                        <th className="p-2 font-medium">Пароль</th>
+                      )}
                       <th className="p-2 font-medium">Дата создания</th>
+                      <th className="p-2 font-medium w-[80px]"></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -173,8 +204,26 @@ export function UsersPage() {
                       <tr key={item.id} className="border-b">
                         <td className="p-2 font-mono">{item.id}</td>
                         <td className="p-2">{item.login}</td>
+                        {currentUser?.is_admin && (
+                          <td className="p-2 font-mono text-muted-foreground">
+                            {createdPasswords[item.id] ?? "—"}
+                          </td>
+                        )}
                         <td className="p-2 text-muted-foreground">
                           {formatCreatedAt(item.created_at)}
+                        </td>
+                        <td className="p-2">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-destructive hover:text-destructive"
+                            onClick={(e) => handleDelete(item.id, e)}
+                            disabled={deletingId !== null}
+                            title="Удалить"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
                         </td>
                       </tr>
                     ))}

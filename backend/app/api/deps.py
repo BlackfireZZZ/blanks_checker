@@ -4,22 +4,24 @@ from app.services.auth import CurrentUser, decode_access_token
 
 
 async def get_current_user(request: Request) -> CurrentUser:
+    # 1) Authorization header
     auth = request.headers.get("Authorization")
-    if not auth or not auth.startswith("Bearer "):
-        raise HTTPException(
-            status_code=401,
-            detail="Not authenticated",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    token = auth[7:].strip()
-    user = decode_access_token(token)
-    if user is None:
-        raise HTTPException(
-            status_code=401,
-            detail="Not authenticated",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    return user
+    if auth and auth.startswith("Bearer "):
+        token = auth[7:].strip()
+        user = decode_access_token(token)
+        if user is not None:
+            return user
+    # 2) Query param ?token= (для запросов к /api/files/ из img/link)
+    token = request.query_params.get("token")
+    if token:
+        user = decode_access_token(token)
+        if user is not None:
+            return user
+    raise HTTPException(
+        status_code=401,
+        detail="Not authenticated",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 
 async def require_admin(

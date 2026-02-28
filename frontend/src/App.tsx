@@ -5,10 +5,12 @@ import { ListPage } from "./pages/ListPage";
 import { EditPage } from "./pages/EditPage";
 import { UsersPage } from "./pages/UsersPage";
 import { ProtectedRoute, AuthOnlyRoute } from "./components/ProtectedRoute";
+import { BackendLoadingOverlay } from "./components/BackendLoadingOverlay";
 
 function App() {
   return (
     <BrowserRouter>
+      <BackendLoadingOverlay />
       <Routes>
         <Route
           path="/"

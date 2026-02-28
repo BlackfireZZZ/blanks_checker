@@ -104,6 +104,10 @@ class CorrectionFieldSubmission(BaseModel):
 
 class CorrectionPayload(BaseModel):
     page: int = Field(..., description="Zero-based index of the processed PDF page")
+    source_filename: str | None = Field(
+        default=None,
+        description="Original PDF filename (for multi-page upload, set when returning 422)",
+    )
     aligned_image_url: str | None = Field(
         default=None, description="URL of the aligned page image to show in UI"
     )
@@ -120,6 +124,9 @@ class BlankListItem(BaseModel):
     source_url: str | None = None
     page_num: int | None = None
     created_at: str = Field(..., description="ISO datetime")
+    verified: bool = Field(default=False, description="Whether the blank was manually verified")
+    verified_at: str | None = Field(default=None, description="ISO datetime when verified")
+    verified_by: str | None = Field(default=None, description="Login of user who verified")
     variant: list[str] = Field(default_factory=list)
     date: list[str] = Field(default_factory=list)
     reg_number: list[str] = Field(default_factory=list)
@@ -132,10 +139,17 @@ class BlankEditResponse(BaseModel):
     page: int
     aligned_image_url: str | None = None
     fields: list[FieldReview]
+    verified: bool = Field(default=False, description="Whether the blank was manually verified")
+    verified_at: str | None = Field(default=None, description="ISO datetime when verified")
+    verified_by: str | None = Field(default=None, description="Login of user who verified")
 
 
 class CorrectionSubmission(BaseModel):
     page: int = Field(..., description="Zero-based index of the corrected page")
+    source_filename: str | None = Field(
+        default=None,
+        description="Original PDF filename (send when saving after multi-page correction)",
+    )
     fields: list[CorrectionFieldSubmission]
     aligned_image_url: str | None = Field(
         default=None,
@@ -145,3 +159,38 @@ class CorrectionSubmission(BaseModel):
         default=None,
         description="If set, update this existing record instead of creating a new one",
     )
+
+
+class SavedRecordIdItem(BaseModel):
+    """One saved blank from multi-page processing."""
+
+    page: int = Field(..., description="Zero-based page index")
+    record_id: int = Field(..., description="Database record id")
+
+
+class MultiPageErrorDetails(BaseModel):
+    """422 details when some pages have validation errors (multi-page upload)."""
+
+    pages_with_errors: list[CorrectionPayload] = Field(
+        ...,
+        description="Payloads for pages that require manual correction",
+    )
+    saved_record_ids: list[SavedRecordIdItem] = Field(
+        default_factory=list,
+        description="Pages that were saved successfully",
+    )
+
+
+class MultiPageSuccessResponse(BaseModel):
+    """200 response when all pages were processed and saved (multi-page upload)."""
+
+    saved_record_ids: list[SavedRecordIdItem] = Field(
+        ...,
+        description="All saved records, one per page",
+    )
+
+
+class SetVerifiedBody(BaseModel):
+    """Body for PATCH /v1/blanks/{id}/verified."""
+
+    verified: bool = Field(..., description="Set blank as verified (true) or unchecked (false)")

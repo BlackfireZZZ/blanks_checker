@@ -16,6 +16,19 @@ export function isAuthenticated(): boolean {
   return !!getToken();
 }
 
+/** Для URL вида /api/files/... добавляет query-параметр token. Ссылка всегда только путь (без хоста/порта), чтобы запрос шёл на тот же origin (nginx на 80). */
+export function fileUrlWithAuth(url: string | null | undefined): string {
+  if (!url) return "";
+  let resolved = url.trim();
+  if (resolved.startsWith("api/files/") && !resolved.startsWith("/"))
+    resolved = "/" + resolved;
+  const token = getToken();
+  if (!token) return resolved;
+  if (!resolved.includes("/api/files/")) return resolved;
+  const sep = resolved.includes("?") ? "&" : "?";
+  return `${resolved}${sep}token=${encodeURIComponent(token)}`;
+}
+
 function redirectToLogin(): void {
   clearToken();
   window.location.href = "/auth";
@@ -111,6 +124,11 @@ export interface UserListItem {
   created_at: string;
 }
 
+/** Response from create user: includes password so main admin can see it */
+export interface UserCreateResponse extends UserListItem {
+  password: string;
+}
+
 export async function fetchUsersList(
   timeoutMs = 15000,
 ): Promise<UserListItem[]> {
@@ -141,7 +159,7 @@ export async function createUserApi(
   loginName: string,
   password: string,
   timeoutMs = 15000,
-): Promise<UserListItem> {
+): Promise<UserCreateResponse> {
   const token = getToken();
   if (!token) throw new Error("Not authenticated");
   const url = `${API_BASE}/api/v1/users`;
@@ -161,8 +179,31 @@ export async function createUserApi(
       if (res.status === 409) throw new Error("Пользователь с таким логином уже существует");
       throw new Error(text || `HTTP ${res.status}`);
     }
-    return JSON.parse(text) as UserListItem;
+    return JSON.parse(text) as UserCreateResponse;
   } finally {
     clearTimeout(timer);
+  }
+}
+
+export async function deleteUserApi(
+  userId: number,
+  timeoutMs = 15000,
+): Promise<void> {
+  const token = getToken();
+  if (!token) throw new Error("Not authenticated");
+  const url = `${API_BASE}/api/v1/users/${userId}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const res = await fetch(url, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+    signal: controller.signal,
+  });
+  clearTimeout(timer);
+  if (!res.ok) {
+    if (res.status === 401) redirectToLogin();
+    if (res.status === 403) throw new Error("Доступ запрещён");
+    if (res.status === 404) throw new Error("Пользователь не найден");
+    throw new Error(await res.text().catch(() => `HTTP ${res.status}`));
   }
 }

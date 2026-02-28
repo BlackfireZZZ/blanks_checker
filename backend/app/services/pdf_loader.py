@@ -5,6 +5,15 @@ import numpy as np
 import fitz  # PyMuPDF
 
 
+def pdf_page_count(pdf_bytes: bytes) -> int:
+    """Возвращает число страниц PDF."""
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        return len(doc)
+    finally:
+        doc.close()
+
+
 def pdf_bytes_to_bgr(
     pdf_bytes: bytes, page_index: int = 0, zoom: float = 2.0
 ) -> np.ndarray:
